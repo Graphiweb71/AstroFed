@@ -1,29 +1,73 @@
 import { Fragment, memo, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { PLANETS } from "../data/planets";
-import type { Planet, OrbitalElements } from "../data/planets";
-import { orbitSamples } from "../lib/astro";
-import type { HeliocentricPosition } from "../lib/astro";
+import type { Planet } from "../data/planets";
+import { centuriesSinceJ2000, orbitSamples } from "../lib/astro";
+import type { HeliocentricPosition, OrbitSample } from "../lib/astro";
 
 export type ScaleMode = "compressa" | "reale";
 
 const CX = 600;
 const CY = 600;
-const BASE = 1200;
+const BASE = 15.2; // px per unità mondo (AU) a zoom 1
+const FOCAL = 95; // lunghezza focale per la prospettiva (unità mondo)
 const DEG = Math.PI / 180;
 
-function mapRadius(rAU: number, mode: ScaleMode): number {
-  return mode === "compressa" ? 58 + 104 * Math.pow(rAU, 0.45) : rAU * 15.2;
+interface Cam {
+  azRad: number;
+  elRad: number;
+  zoom: number;
+  scaleMode: ScaleMode;
 }
 
-function orbitPathD(el: OrbitalElements, T: number, mode: ScaleMode): string {
-  const pts = orbitSamples(el, T, 180);
+/** raggio mondo compresso in unità "AU equivalenti" */
+function compressedWorldR(rAU: number): number {
+  return (58 + 104 * Math.pow(rAU, 0.45)) / BASE;
+}
+
+function toWorld(pos: HeliocentricPosition, mode: ScaleMode): [number, number, number] {
+  if (mode === "reale") return [pos.xAU, pos.yAU, pos.zAU];
+  const f = compressedWorldR(pos.rAU) / pos.rAU;
+  return [pos.xAU * f, pos.yAU * f, pos.zAU * f];
+}
+
+interface Proj {
+  x: number;
+  y: number;
+  depth: number;
+  k: number;
+}
+
+/** proiezione orbit-camera: azimut attorno a Z, elevazione dal piano eclittico, prospettiva */
+function project(X: number, Y: number, Z: number, cam: Cam): Proj {
+  const ca = Math.cos(cam.azRad);
+  const sa = Math.sin(cam.azRad);
+  const ce = Math.cos(cam.elRad);
+  const se = Math.sin(cam.elRad);
+  const X1 = X * ca + Y * sa;
+  const Y1 = -X * sa + Y * ca;
+  const sy = Y1 * se + Z * ce;
+  const depth = Y1 * ce - Z * se;
+  const k = FOCAL / (FOCAL - depth);
+  const s = BASE * cam.zoom;
+  return { x: CX + X1 * k * s, y: CY - sy * k * s, depth, k };
+}
+
+function orbitPathD(samples: OrbitSample[], cam: Cam): string {
   let d = "";
-  for (let i = 0; i < pts.length; i++) {
-    const R = mapRadius(pts[i].rAU, mode);
-    const x = CX + R * Math.cos(pts[i].lambdaRad);
-    const y = CY - R * Math.sin(pts[i].lambdaRad);
-    d += `${i === 0 ? "M" : "L"}${x.toFixed(1)} ${y.toFixed(1)}`;
+  for (let i = 0; i < samples.length; i++) {
+    let X = samples[i].xAU;
+    let Y = samples[i].yAU;
+    let Z = samples[i].zAU;
+    if (cam.scaleMode === "compressa") {
+      const r = Math.sqrt(X * X + Y * Y + Z * Z);
+      const f = compressedWorldR(r) / r;
+      X *= f;
+      Y *= f;
+      Z *= f;
+    }
+    const p = project(X, Y, Z, cam);
+    d += `${i === 0 ? "M" : "L"}${p.x.toFixed(1)} ${p.y.toFixed(1)}`;
   }
   return d + "Z";
 }
@@ -89,50 +133,54 @@ const HudRing = memo(function HudRing() {
   );
 });
 
-/* ---------- fascia degli asteroidi ---------- */
+/* ---------- fascia degli asteroidi (3D) ---------- */
 interface Asteroid {
   aAU: number;
   ang: number;
+  incl: number;
+  ph: number;
   r: number;
   o: number;
 }
 
-const AsteroidBelt = memo(function AsteroidBelt({ scaleMode }: { scaleMode: ScaleMode }) {
+function AsteroidBelt({ cam, simDays }: { cam: Cam; simDays: number }) {
   const belt = useMemo<Asteroid[]>(
     () =>
       Array.from({ length: 230 }, () => ({
-        aAU: (2.06 + Math.random() * 1.3) * (0.965 + Math.random() * 0.07),
+        aAU: 2.06 + Math.random() * 1.3,
         ang: Math.random() * Math.PI * 2,
+        incl: (Math.random() * 2 - 1) * 0.11,
+        ph: Math.random() * Math.PI * 2,
         r: 0.45 + Math.random() * 0.95,
         o: 0.12 + Math.random() * 0.3,
       })),
     [],
   );
 
+  const rot = simDays * 0.0037;
   return (
-    <g className="anim-belt" pointerEvents="none">
+    <g pointerEvents="none">
       {belt.map((b, i) => {
-        const R = mapRadius(b.aAU, scaleMode);
+        const R = cam.scaleMode === "reale" ? b.aAU : compressedWorldR(b.aAU);
+        const A = b.ang + rot;
+        const X = R * Math.cos(A);
+        const Y = R * Math.sin(A);
+        const Z = R * Math.sin(b.incl) * Math.sin(A + b.ph);
+        const p = project(X, Y, Z, cam);
         return (
-          <circle
-            key={i}
-            cx={CX + R * Math.cos(b.ang)}
-            cy={CY - R * Math.sin(b.ang)}
-            r={b.r}
-            fill="#9fb4c7"
-            opacity={b.o}
-          />
+          <circle key={i} cx={p.x.toFixed(1)} cy={p.y.toFixed(1)} r={b.r * (0.6 + 0.4 * p.k)} fill="#9fb4c7" opacity={b.o} />
         );
       })}
     </g>
   );
-});
+}
 
 /* ---------- glifo del pianeta (ologramma vettoriale) ---------- */
 interface GlyphProps {
   planet: Planet;
   x: number;
   y: number;
+  sizeScale: number;
   simDays: number;
   index: number;
   selected: boolean;
@@ -141,8 +189,8 @@ interface GlyphProps {
   onHover: (id: string | null) => void;
 }
 
-function PlanetGlyph({ planet, x, y, simDays, index, selected, showLabel, onSelect, onHover }: GlyphProps) {
-  const r = planet.displayRadius;
+function PlanetGlyph({ planet, x, y, sizeScale, simDays, index, selected, showLabel, onSelect, onHover }: GlyphProps) {
+  const r = planet.displayRadius * sizeScale;
   const phase = (simDays / planet.rotationDays) * Math.PI * 2;
   const meridians = [0, 1, 2, 3].map((k) => Math.abs(Math.cos(phase + (k * Math.PI) / 4)) * r);
   const parallels = [-42, 0, 42].map((lat) => {
@@ -255,6 +303,8 @@ interface SolarSystemProps {
   positions: Map<string, HeliocentricPosition>;
   scaleMode: ScaleMode;
   zoom: number;
+  camAz: number; // gradi
+  camEl: number; // gradi
   selectedId: string | null;
   showLabels: boolean;
   showOrbits: boolean;
@@ -262,11 +312,22 @@ interface SolarSystemProps {
   onZoomDelta: (dir: 1 | -1) => void;
 }
 
+interface PlanetView {
+  planet: Planet;
+  pos: HeliocentricPosition;
+  x: number;
+  y: number;
+  depth: number;
+  k: number;
+}
+
 export default function SolarSystem({
   simMs,
   positions,
   scaleMode,
   zoom,
+  camAz,
+  camEl,
   selectedId,
   showLabels,
   showOrbits,
@@ -287,13 +348,61 @@ export default function SolarSystem({
     return () => el.removeEventListener("wheel", onWheel);
   }, [onZoomDelta]);
 
-  const T = (simMs / 86400000 + 2440587.5 - 2451545.0) / 36525.0;
+  const cam: Cam = useMemo(
+    () => ({ azRad: camAz * DEG, elRad: camEl * DEG, zoom, scaleMode }),
+    [camAz, camEl, zoom, scaleMode],
+  );
+
+  const T = centuriesSinceJ2000(simMs);
   const simDays = simMs / 86400000;
-  const size = BASE / zoom;
+  const size = 1200 / zoom;
   const sunR = scaleMode === "compressa" ? 34 : 11;
 
-  const hovered = hoverId && hoverId !== "sole" && hoverId !== selectedId ? PLANETS.find((p) => p.id === hoverId) : null;
-  const hoveredPos = hovered ? positions.get(hovered.id) : undefined;
+  const orbitDs = useMemo(
+    () => PLANETS.map((p) => orbitPathD(orbitSamples(p.elements, T), cam)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [simMs, camAz, camEl, zoom, scaleMode],
+  );
+
+  const views = useMemo<PlanetView[]>(() => {
+    const arr: PlanetView[] = [];
+    for (const p of PLANETS) {
+      const pos = positions.get(p.id);
+      if (!pos) continue;
+      const w = toWorld(pos, scaleMode);
+      const pr = project(w[0], w[1], w[2], cam);
+      arr.push({ planet: p, pos, x: pr.x, y: pr.y, depth: pr.depth, k: pr.k });
+    }
+    return arr;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [positions, camAz, camEl, zoom, scaleMode]);
+
+  const behind = views.filter((v) => v.depth < 0);
+  const inFront = views.filter((v) => v.depth >= 0);
+
+  const renderPlanet = (v: PlanetView) => {
+    const idx = PLANETS.indexOf(v.planet);
+    const rEff = v.planet.displayRadius * (0.55 + 0.45 * v.k);
+    return (
+      <Fragment key={v.planet.id}>
+        <PlanetGlyph
+          planet={v.planet}
+          x={v.x}
+          y={v.y}
+          sizeScale={0.55 + 0.45 * v.k}
+          simDays={simDays}
+          index={idx}
+          selected={selectedId === v.planet.id}
+          showLabel={showLabels}
+          onSelect={onSelect}
+          onHover={setHoverId}
+        />
+        {selectedId === v.planet.id && <Reticle x={v.x} y={v.y} r={rEff + 9} />}
+      </Fragment>
+    );
+  };
+
+  const hovered = hoverId && hoverId !== "sole" ? views.find((v) => v.planet.id === hoverId) : undefined;
 
   return (
     <svg
@@ -331,14 +440,14 @@ export default function SolarSystem({
               <stop offset="100%" stopColor={p.colors.base} stopOpacity="0" />
             </radialGradient>
             <clipPath id={`clip-${p.id}`}>
-              <circle r={p.displayRadius} />
+              <circle r={p.displayRadius * 2} />
             </clipPath>
           </Fragment>
         ))}
       </defs>
 
       <HudRing />
-      <AsteroidBelt scaleMode={scaleMode} />
+      <AsteroidBelt cam={cam} simDays={simDays} />
 
       {/* testi HUD */}
       <g pointerEvents="none">
@@ -352,7 +461,7 @@ export default function SolarSystem({
           fill="#6ee7f2"
           fillOpacity="0.4"
         >
-          PIANO ECLITTICO · VISTA DA NORD
+          COMANDO ORBITA · TRASCINA LO SFONDO O USA IL JOYSTICK PER RUOTARE LA VISTA
         </text>
         <text
           x={CX}
@@ -365,20 +474,20 @@ export default function SolarSystem({
           fillOpacity="0.4"
         >
           {scaleMode === "compressa"
-            ? "SCALA DISTANZE COMPRESSA (r^0,45) — LE ORBITE NON SONO IN SCALA"
+            ? "SCALA DISTANZE COMPRESSA — LE ORBITE NON SONO IN SCALA"
             : "SCALA DISTANZE REALE — USA LO ZOOM PER I PIANETI INTERNI"}
         </text>
       </g>
 
       {/* orbite */}
       {showOrbits &&
-        PLANETS.map((p) => {
+        PLANETS.map((p, i) => {
           const sel = selectedId === p.id;
           const hov = hoverId === p.id;
           return (
             <path
               key={p.id}
-              d={orbitPathD(p.elements, T, scaleMode)}
+              d={orbitDs[i]}
               fill="none"
               stroke={p.colors.base}
               strokeOpacity={sel ? 0.85 : hov ? 0.5 : 0.22}
@@ -390,10 +499,13 @@ export default function SolarSystem({
           );
         })}
 
-      {/* Sole */}
+      {/* pianeti dietro al Sole */}
+      {behind.map(renderPlanet)}
+
+      {/* Sole (fisso al centro) */}
       <g
         transform={`translate(${CX} ${CY})`}
-        className="group-planet cursor-pointer"
+        className="group/planet group-planet cursor-pointer"
         onClick={(e) => {
           e.stopPropagation();
           onSelect("sole");
@@ -429,59 +541,19 @@ export default function SolarSystem({
           </text>
         )}
       </g>
+      {selectedId === "sole" && <Reticle x={CX} y={CY} r={sunR + 12} />}
 
-      {/* pianeti */}
-      {PLANETS.map((p, i) => {
-        const pos = positions.get(p.id);
-        if (!pos) return null;
-        const R = mapRadius(pos.rAU, scaleMode);
-        const x = CX + R * Math.cos(pos.lambdaRad);
-        const y = CY - R * Math.sin(pos.lambdaRad);
-        return (
-          <PlanetGlyph
-            key={p.id}
-            planet={p}
-            x={x}
-            y={y}
-            simDays={simDays}
-            index={i}
-            selected={selectedId === p.id}
-            showLabel={showLabels}
-            onSelect={onSelect}
-            onHover={setHoverId}
-          />
-        );
-      })}
-
-      {/* reticolo sul corpo selezionato */}
-      {selectedId === "sole" ? (
-        <Reticle x={CX} y={CY} r={sunR + 12} />
-      ) : selectedId ? (
-        (() => {
-          const p = PLANETS.find((pl) => pl.id === selectedId);
-          const pos = p && positions.get(p.id);
-          if (!p || !pos) return null;
-          const R = mapRadius(pos.rAU, scaleMode);
-          return (
-            <Reticle
-              x={CX + R * Math.cos(pos.lambdaRad)}
-              y={CY - R * Math.sin(pos.lambdaRad)}
-              r={p.displayRadius + 9}
-            />
-          );
-        })()
-      ) : null}
+      {/* pianeti davanti al Sole */}
+      {inFront.map(renderPlanet)}
 
       {/* tooltip al passaggio del mouse */}
-      {hovered && hoveredPos && (
+      {hovered &&
         (() => {
-          const R = mapRadius(hoveredPos.rAU, scaleMode);
-          const x = CX + R * Math.cos(hoveredPos.lambdaRad);
-          const y = CY - R * Math.sin(hoveredPos.lambdaRad);
+          const rEff = hovered.planet.displayRadius * (0.55 + 0.45 * hovered.k);
           return (
-            <g transform={`translate(${x.toFixed(2)} ${y.toFixed(2)})`} pointerEvents="none">
+            <g transform={`translate(${hovered.x.toFixed(2)} ${hovered.y.toFixed(2)})`} pointerEvents="none">
               <text
-                y={-hovered.displayRadius - 22}
+                y={-rEff - 22}
                 textAnchor="middle"
                 fontSize="11.5"
                 letterSpacing="1.5"
@@ -491,10 +563,10 @@ export default function SolarSystem({
                 strokeWidth="3.5"
                 paintOrder="stroke"
               >
-                {hovered.nome.toUpperCase()}
+                {hovered.planet.nome.toUpperCase()}
               </text>
               <text
-                y={-hovered.displayRadius - 9}
+                y={-rEff - 9}
                 textAnchor="middle"
                 fontSize="9"
                 className="font-mono"
@@ -503,12 +575,11 @@ export default function SolarSystem({
                 strokeWidth="3"
                 paintOrder="stroke"
               >
-                r = {hoveredPos.rAU.toFixed(2)} AU
+                r = {hovered.pos.rAU.toFixed(2)} AU
               </text>
             </g>
           );
-        })()
-      )}
+        })()}
     </svg>
   );
 }

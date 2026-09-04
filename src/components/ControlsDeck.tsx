@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { SPEEDS } from "../data/planets";
 import type { ScaleMode } from "./SolarSystem";
 import { toLocalInputValue } from "../lib/astro";
@@ -44,6 +44,12 @@ export default function ControlsDeck({
 }: Props) {
   const [draft, setDraft] = useState(() => toLocalInputValue(simMs));
   const focused = useRef(false);
+
+  const dateOnly = useMemo(
+    () =>
+      new Intl.DateTimeFormat("it-IT", { day: "2-digit", month: "short", year: "numeric" }).format(simMs),
+    [simMs],
+  );
 
   // sincronizza il campo con l'orologio di simulazione (tranne durante la modifica)
   useEffect(() => {
@@ -109,21 +115,37 @@ export default function ControlsDeck({
         <div>
           <GroupLabel>DATA E ORA · SIMULAZIONE</GroupLabel>
           <div className="flex items-stretch gap-1.5">
-            <input
-              type="datetime-local"
-              value={draft}
-              onFocus={() => (focused.current = true)}
-              onBlur={() => {
-                focused.current = false;
-                commit(draft);
-              }}
-              onChange={(e) => {
-                setDraft(e.target.value);
-                commit(e.target.value);
-              }}
-              aria-label="Data e ora della simulazione"
-              className="rounded-[3px] border border-white/15 bg-white/[0.04] px-2 py-[7px] font-mono text-[12px] text-slate-100 outline-none transition-colors focus:border-holo/70"
-            />
+            {playing ? (
+              <div
+                className="flex items-center gap-2.5 border border-white/12 bg-white/[0.03] px-3"
+                title="Metti in pausa per modificare data e ora"
+              >
+                <span className="relative flex h-2 w-2 shrink-0">
+                  <span className="anim-ping-dot absolute inline-flex h-full w-full rounded-full bg-holo" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-holo" />
+                </span>
+                <span className="font-mono text-[12px] tabular text-slate-300">{dateOnly}</span>
+                <span className="hidden font-mono text-[9.5px] text-slate-600 sm:inline">
+                  ora nascosta durante il moto
+                </span>
+              </div>
+            ) : (
+              <input
+                type="datetime-local"
+                value={draft}
+                onFocus={() => (focused.current = true)}
+                onBlur={() => {
+                  focused.current = false;
+                  commit(draft);
+                }}
+                onChange={(e) => {
+                  setDraft(e.target.value);
+                  commit(e.target.value);
+                }}
+                aria-label="Data e ora della simulazione"
+                className="rounded-[3px] border border-white/15 bg-white/[0.04] px-2 py-[7px] font-mono text-[12px] text-slate-100 outline-none transition-colors focus:border-holo/70"
+              />
+            )}
             <button
               onClick={onResetNow}
               className="flex items-center gap-1.5 border border-solar/50 px-2.5 font-display text-[10px] tracking-[0.18em] text-solar transition-all duration-150 hover:bg-solar/10 active:scale-95"

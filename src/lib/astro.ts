@@ -31,19 +31,24 @@ export interface HeliocentricPosition {
   rAU: number;
   /** longitudine eliocentrica nel piano dell'eclittica (radianti) */
   lambdaRad: number;
+  /** coordinate eliocentriche eclittiche (AU), Z verso il polo nord eclittico */
   xAU: number;
   yAU: number;
+  zAU: number;
 }
 
 /**
  * Posizione eliocentrica approssimata (elementi kepleriani medi J2000,
- * approssimazione JPL di E. Standish, valida 1800–2050).
+ * approssimazione JPL di E. Standish, valida 1800–2050), con inclinazione
+ * e nodo ascendente: coordinate eclittiche complete X, Y, Z.
  */
 export function heliocentricPosition(el: OrbitalElements, T: number): HeliocentricPosition {
   const a = el.a + el.rates.a * T;
   const e = el.e + el.rates.e * T;
   const L = el.L + el.rates.L * T;
   const peri = el.peri + el.rates.peri * T;
+  const node = (el.node + el.rates.node * T) * DEG;
+  const incl = (el.i + el.rates.i * T) * DEG;
 
   const M = norm360(L - peri) * DEG;
   const E = solveKepler(M, e);
@@ -54,24 +59,41 @@ export function heliocentricPosition(el: OrbitalElements, T: number): Heliocentr
   const rAU = a * (1 - e * Math.cos(E));
   const lambdaRad = nu + peri * DEG;
 
+  const u = nu + peri * DEG - node; // argomento di latitudine
+  const cosU = Math.cos(u);
+  const sinU = Math.sin(u);
+  const cosN = Math.cos(node);
+  const sinN = Math.sin(node);
+  const cosI = Math.cos(incl);
+  const sinI = Math.sin(incl);
+
   return {
     rAU,
     lambdaRad,
-    xAU: rAU * Math.cos(lambdaRad),
-    yAU: rAU * Math.sin(lambdaRad),
+    xAU: rAU * (cosN * cosU - sinN * sinU * cosI),
+    yAU: rAU * (sinN * cosU + cosN * sinU * cosI),
+    zAU: rAU * (sinU * sinI),
   };
 }
 
 export interface OrbitSample {
-  rAU: number;
-  lambdaRad: number;
+  xAU: number;
+  yAU: number;
+  zAU: number;
 }
 
-/** Campioni dell'orbita completa (parametrizzata per anomalia eccentrica) */
+/** Campioni dell'orbita completa in coordinate eclittiche 3D (anomalia eccentrica) */
 export function orbitSamples(el: OrbitalElements, T: number, samples = 180): OrbitSample[] {
   const a = el.a + el.rates.a * T;
   const e = el.e + el.rates.e * T;
   const peri = (el.peri + el.rates.peri * T) * DEG;
+  const node = (el.node + el.rates.node * T) * DEG;
+  const incl = (el.i + el.rates.i * T) * DEG;
+  const argPeri = peri - node;
+  const cosN = Math.cos(node);
+  const sinN = Math.sin(node);
+  const cosI = Math.cos(incl);
+  const sinI = Math.sin(incl);
 
   const pts: OrbitSample[] = [];
   for (let k = 0; k <= samples; k++) {
@@ -80,7 +102,15 @@ export function orbitSamples(el: OrbitalElements, T: number, samples = 180): Orb
       Math.sqrt(1 + e) * Math.sin(E / 2),
       Math.sqrt(1 - e) * Math.cos(E / 2),
     );
-    pts.push({ rAU: a * (1 - e * Math.cos(E)), lambdaRad: nu + peri });
+    const r = a * (1 - e * Math.cos(E));
+    const u = nu + argPeri;
+    const cosU = Math.cos(u);
+    const sinU = Math.sin(u);
+    pts.push({
+      xAU: r * (cosN * cosU - sinN * sinU * cosI),
+      yAU: r * (sinN * cosU + cosN * sinU * cosI),
+      zAU: r * (sinU * sinI),
+    });
   }
   return pts;
 }
