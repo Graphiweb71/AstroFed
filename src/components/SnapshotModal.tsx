@@ -16,6 +16,15 @@ export default function SnapshotModal({ initialMs, camAz, camEl, scaleMode, onCl
   const [draft, setDraft] = useState(() => toLocalInputValue(initialMs));
   const [title, setTitle] = useState("");
   const [invert, setInvert] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const inIframe = useMemo(() => {
+    try {
+      return window.self !== window.top;
+    } catch {
+      return true;
+    }
+  }, []);
   const [view, setView] = useState<"alto" | "3d">("alto");
 
   useEffect(() => {
@@ -55,6 +64,36 @@ export default function SnapshotModal({ initialMs, camAz, camEl, scaleMode, onCl
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 2000);
+  };
+
+  const openInTab = () => {
+    const uri = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+    window.open(uri, "_blank", "noopener");
+  };
+
+  const copySvg = async () => {
+    let ok = false;
+    try {
+      await navigator.clipboard.writeText(svg);
+      ok = true;
+    } catch {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = svg;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        ok = document.execCommand("copy");
+        ta.remove();
+      } catch {
+        ok = false;
+      }
+    }
+    if (ok) {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2200);
+    }
   };
 
   const commit = (v: string) => {
@@ -180,6 +219,14 @@ export default function SnapshotModal({ initialMs, camAz, camEl, scaleMode, onCl
             </span>
           </button>
 
+          {inIframe && (
+            <div className="border border-solar/30 bg-solar/[0.06] p-2.5 font-mono text-[9.5px] leading-relaxed text-solar/90">
+              L'app è aperta in un'anteprima incorporata: alcuni browser bloccano il download diretto.
+              In tal caso usa «APRI IN SCHEDA» e poi salva con Ctrl+S, oppure «COPIA SVG» e incolla il
+              codice in un file di testo salvato come .svg
+            </div>
+          )}
+
           <button
             onClick={download}
             className="flex items-center justify-center gap-2 bg-holo px-4 py-3 font-display text-[12px] font-bold tracking-[0.2em] text-[#04121c] transition-all hover:bg-holo-strong hover:shadow-[0_0_24px_rgba(110,231,242,0.45)] active:scale-[0.98]"
@@ -189,7 +236,44 @@ export default function SnapshotModal({ initialMs, camAz, camEl, scaleMode, onCl
             </svg>
             SCARICA SVG
           </button>
-          <p className="-mt-2 text-center font-mono text-[10px] text-slate-600">{starMapFilename(ms)}</p>
+
+          <div className="-mt-2 flex gap-1.5">
+            <button
+              onClick={openInTab}
+              className="flex flex-1 items-center justify-center gap-1.5 border border-white/15 px-2 py-2 font-display text-[9.5px] tracking-[0.14em] text-slate-300 transition-all hover:border-holo/50 hover:text-holo active:scale-[0.98]"
+              title="Apre la mappa in una nuova scheda del browser, da salvare con Ctrl+S"
+            >
+              <svg viewBox="0 0 24 24" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M14 5h5v5M19 5l-8 8M19 14v5H5V5h5" />
+              </svg>
+              APRI IN SCHEDA
+            </button>
+            <button
+              onClick={copySvg}
+              className={`flex flex-1 items-center justify-center gap-1.5 border px-2 py-2 font-display text-[9.5px] tracking-[0.14em] transition-all active:scale-[0.98] ${
+                copied
+                  ? "border-emerald-400/60 bg-emerald-400/10 text-emerald-300"
+                  : "border-white/15 text-slate-300 hover:border-holo/50 hover:text-holo"
+              }`}
+              title="Copia il codice SVG negli appunti"
+            >
+              <svg viewBox="0 0 24 24" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                {copied ? (
+                  <path d="M5 13l4 4L19 7" />
+                ) : (
+                  <>
+                    <rect x="9" y="9" width="11" height="11" rx="1" />
+                    <path d="M5 15V5a1 1 0 011-1h9" />
+                  </>
+                )}
+              </svg>
+              {copied ? "COPIATO" : "COPIA SVG"}
+            </button>
+          </div>
+
+          <p className="-mt-2 text-center font-mono text-[10px] text-slate-600">
+            {starMapFilename(ms)} · salvato nella cartella Download del browser
+          </p>
 
           <p className="mt-auto border-t border-white/[0.06] pt-3 font-mono text-[9px] leading-relaxed text-slate-600">
             Formati consigliati: stampa, incisione, tatuaggio, web. Essendo vettoriale, scala a qualsiasi
